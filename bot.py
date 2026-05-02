@@ -1,65 +1,87 @@
 import os
+import json
+import logging
+from flask import Flask, request
 import telebot
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import json
-import sys
+from datetime import datetime
 
-print("🚀 Bắt đầu quá trình khởi động bot...")
+logging.basicConfig(level=logging.INFO)
+app = Flask(__name__)
 
-# --- Kiểm tra TELEGRAM_TOKEN ---
+# Lấy biến môi trường
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
-if not TOKEN:
-    print("❌ LỖI NGHIÊM TRỌNG: Biến môi trường 'TELEGRAM_TOKEN' không tồn tại!")
-    sys.exit(1)
-print("✅ Đã tìm thấy 'TELEGRAM_TOKEN'.")
-
-# --- Kiểm tra SHEET_ID ---
 SHEET_ID = os.environ.get("SHEET_ID")
-if not SHEET_ID:
-    print("❌ LỖI NGHIÊM TRỌNG: Biến môi trường 'SHEET_ID' không tồn tại!")
-    sys.exit(1)
-print(f"✅ Đã tìm thấy 'SHEET_ID': {SHEET_ID}")
+CREDS_JSON = os.environ.get("GOOGLE_CREDENTIALS")
 
-# --- Kiểm tra và Parse GOOGLE_CREDENTIALS ---
-creds_json_str = os.environ.get("GOOGLE_CREDENTIALS")
-if not creds_json_str:
-    print("❌ LỖI NGHIÊM TRỌNG: Biến môi trường 'GOOGLE_CREDENTIALS' không tồn tại!")
-    sys.exit(1)
-print("✅ Đã tìm thấy 'GOOGLE_CREDENTIALS'. Đang xử lý nội dung JSON...")
+if not TOKEN or not SHEET_ID or not CREDS_JSON:
+    logging.error("❌ Thiếu biến môi trường!")
+    exit(1)
 
+# Kết nối Google Sheets
 try:
-    # Thử parse JSON
-    creds_dict = json.loads(creds_json_str)
-    print("✅ Parse JSON thành công.")
-    
-    # Thử xác thực với Google
+    creds_dict = json.loads(CREDS_JSON)
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
-    print("✅ Xác thực với Google thành công.")
-    
-    # Thử mở sheet và worksheet cụ thể
     sheet = client.open_by_key(SHEET_ID).worksheet("GiaoDich")
-    print("🎉 Kết nối thành công! Bot đã có thể đọc được sheet 'GiaoDich'.")
-
+    logging.info("✅ Kết nối Google Sheets thành công!")
 except Exception as e:
-    # In ra lỗi chi tiết
-    print(f"❌❌❌ LỖI KẾT NỐI GOOGLE SHEETS: {e}")
-    print("Vui lòng kiểm tra lại 'SHEET_ID' và nội dung của 'GOOGLE_CREDENTIALS' (file JSON).")
-    sys.exit(1)
+    logging.error(f"❌ Lỗi Google Sheets: {e}")
+    exit(1)
 
-# --- Khởi tạo và chạy Bot Telegram ---
-print("🤖 Đang khởi tạo bot Telegram...")
 bot = telebot.TeleBot(TOKEN)
 
-@bot.message_handler(commands=['start', 'help'])
-def send_welcome(message):
-    bot.reply_to(message, "Xin chào! Bot MAO đã sẵn sàng và kết nối thành công với Google Sheet của bạn!")
+def ghi_giao_dich(loai, phan_loai, mo_ta, so_tien):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sheet.append_row([now, loai, phan_loai, mo_ta, so_tien, ""])
 
-print("✅ Bot Telegram đã sẵn sàng. Bắt đầu lắng nghe lệnh...")
-try:
-    bot.infinity_polling()
-except Exception as e:
-    print(f"❌ Lỗi khi chạy bot: {e}")
-    sys.exit(1)
+@bot.message_handler(commands=['start', 'help'])
+def help_cmd(message):
+    bot.reply_to(message, "📌 /thu save [mô tả], [số nghìn]\n/chi [save/give/reward] [mô tả], [số nghìn]")
+
+@bot.message_handler(commands=['thu', 'nhận'])
+def thu(message):
+    try:
+        parts = message.text.split(maxsplit=1)[1].split(',')
+        mo_ta = parts[0].strip()
+        so_tien = int(parts[1].strip()) * 1000
+        ghi_giao_dich("Thu", "SAVE", mo_ta, so_tien)
+        bot.reply_to(message, f"✅ Đã nhận {mo_ta}: {so_tien:,}đ")
+    except:
+        bot.reply_to(message, "❌ Sai cú pháp. VD: /thu save lương, 10000")
+
+@bot.message_handler(commands=['chi'])
+def chi(message):
+    try:
+        text = message.text.split(maxsplit=1)[1]
+        phan_loai = text.split()[0].upper()
+        rest = text.split(maxsplit=1)[1].split(',')
+        mo_ta = rest[0].strip()
+        so_tien = int(rest[1].strip()) * 1000
+        ghi_giao_dich("Chi", phan_loai, mo_ta, so_tien)
+        bot.reply_to(message, f"✅ Đã chi {mo_ta}: {so_tien:,}đ từ quỹ {phan_loai}")
+    except:
+        bot.reply_to(message, "❌ Sai cú pháp. VD: /chi reward cà phê, 45")
+
+@app.route('/')
+def index():
+    return "Bot is running!"
+
+@app.route(f'/{TOKEN}', methods=['POST'])
+def webhook():
+    try:
+        update = telebot.types.Update.de_json(request.get_data().decode('UTF-8'))
+        bot.process_new_updates([update])
+        return '', 200
+    except:
+        return '', 200
+
+if __name__ == "__main__":
+    webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/{TOKEN}"
+    bot.remove_webhook()
+    bot.set_webhook(url=webhook_url)
+    logging.info(f"✅ Webhook set: {webhook_url}")
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
