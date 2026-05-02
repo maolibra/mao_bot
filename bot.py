@@ -96,4 +96,10 @@ def help_cmd(message):
 💡 Số tiền nhập là số nghìn (VD: 45 = 45,000đ)""", parse_mode="Markdown")
 
 print("Bot MAO đang chạy...")
-bot.infinity_polling()
+import time
+while True:
+    try:
+        bot.infinity_polling()
+    except Exception as e:
+        print(f"Lỗi: {e}. Kết nối lại sau 10 giây...")
+        time.sleep(10)
