@@ -85,3 +85,20 @@ if __name__ == "__main__":
     logging.info(f"✅ Webhook set: {webhook_url}")
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
+
+try:
+    creds_dict = json.loads(CREDS_JSON)
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    
+    # Liệt kê tất cả sheet để kiểm tra
+    sheets = client.open_by_key(SHEET_ID).worksheets()
+    sheet_names = [s.title for s in sheets]
+    logging.info(f"📋 Các sheet trong file: {sheet_names}")
+    
+    sheet = client.open_by_key(SHEET_ID).worksheet("GiaoDich")
+    logging.info("✅ Kết nối Google Sheets thành công!")
+except Exception as e:
+    logging.error(f"❌ Lỗi Google Sheets: {e}")
+    exit(1)
